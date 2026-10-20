@@ -48,4 +48,4 @@ Hook 非零或超时保留待执行状态，下次重试；未变化且已成功
 
 ARMv5 必须 soft-float，不能使用 ARMv7 hard-float 包。MIPS 需匹配字节序、ISA 和 ABI。mostly-static 仍依赖报告中的加载器/libc；static 也有最低内核与 Resolver 环境要求。uClibc 和光猫固件按实际 SDK 验收，参见 [嵌入式说明](embedded-builds.md)。Linux x86_64 GCC SDK 不能直接在 macOS ARM64 执行，exec format error 不能用关闭静态检查解决。
 
-旧 build cache 可能仍保留 `CIPHERDNS_VERSION=0.1.0` 或集成测试 OFF；使用新目录或显式 `-DCIPHERDNS_VERSION=0.2.0 -DCIPHERDNS_INTEGRATION_TESTS=ON`。打包报告过期、版本不符或同名包内容变化时会拒绝覆盖，先重新构建并检查报告，或使用新的输出目录；不要伪造成功报告。
+旧 build cache 可能仍保留旧 `CIPHERDNS_VERSION` 或集成测试 OFF；使用新目录或显式 `-DCIPHERDNS_VERSION=0.2.1 -DCIPHERDNS_INTEGRATION_TESTS=ON`。打包报告过期、版本不符或同名包内容变化时会拒绝覆盖，先重新构建并检查报告，或使用新的输出目录；不要伪造成功报告。

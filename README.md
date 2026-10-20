@@ -10,14 +10,14 @@ Client Hook ← 本地 JSON ← 认证解密 ← 系统 Resolver 查询 TXT
 
 默认单个二进制同时包含 Server 和 Client；也支持 `SERVER`、`CLIENT` 单独构建。Client-only 不编译 HTTPS、X.509 或 Provider 模块。目标程序不依赖 Python、Node.js、OpenSSL、libcurl 或设备预装的 Mbed TLS。
 
-当前开发版本 **v0.2.0**。新增部署诊断、安全的可选真实 API 验收、SDK 构建和稳定性测试，保持 v0.1 的 `CD1:` AES 协议兼容。结果和待验收项见 [验证记录](docs/validation.md)、[审查与修复](docs/audit-v0.2.0.md)、[发布说明](docs/release-v0.2.0.md)。
+当前版本 **v0.2.1**，修复 Release 对 Windows CRLF 报告的校验。沿用 v0.2.0 的部署诊断、安全的可选真实 API 验收、SDK 构建和稳定性测试，保持 v0.1 的 `CD1:` AES 协议兼容。结果和待验收项见 [验证记录](docs/validation.md)、[审查与修复](docs/audit-v0.2.0.md)、[发布说明](docs/release-v0.2.1.md)。
 
 ## 快速开始
 
 需要 C11 编译器、CMake 3.20+ 和平台 SDK。第三方源码已纳入仓库，配置及构建无需下载。
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=MinSizeRel -DCIPHERDNS_VERSION=0.2.0 -DCIPHERDNS_INTEGRATION_TESTS=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=MinSizeRel -DCIPHERDNS_VERSION=0.2.1 -DCIPHERDNS_INTEGRATION_TESTS=ON
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 
@@ -221,7 +221,7 @@ Server 固定使用 HTTPS Provider 端点，验证证书链和主机名。TLS �
 
 GitHub Actions 配置了原生 Linux/macOS ARM64/macOS x86_64/Windows x86_64 测试、Linux Sanitizer，以及固定 Zig 0.15.2 的六个 Linux musl 静态目标和固定 Bootlin GCC SDK 的 ARMv5 soft-float 构建。工具链下载校验 SHA256；交叉编译的架构与依赖检查不代替硬件运行验收。Windows ARM64 暂无预制 Release，保留自行使用匹配 SDK 编译的路径。
 
-Tag `v*` 触发 Release，所有必需矩阵成员成功后才发布；失败架构不生成占位包。默认 BOTH 包名为 `cipherdns-0.2.0-<platform>.tar.gz`，Linux 平台标签包含 `musl-static` 或 `glibc-mostly-static`，Windows 使用 `.zip`；单角色另含 `CLIENT` / `SERVER` 标签。包包含示例、文档、版本、许可证、内部 SHA256 和依赖报告；发布附总 `SHA256SUMS`、Release Notes 和 `BUILD-REPORTS`。报告记录 CPU/端序/ABI、libc、加载器、动态依赖、编译器、SHA256 和最低兼容要求。打包会拒绝与二进制内容或版本不匹配的报告。
+Tag `v*` 触发 Release，所有必需矩阵成员成功后才发布；失败架构不生成占位包。默认 BOTH 包名为 `cipherdns-0.2.1-<platform>.tar.gz`，Linux 平台标签包含 `musl-static` 或 `glibc-mostly-static`，Windows 使用 `.zip`；单角色另含 `CLIENT` / `SERVER` 标签。包包含示例、文档、版本、许可证、内部 SHA256 和依赖报告；发布附总 `SHA256SUMS`、Release Notes 和 `BUILD-REPORTS`。报告记录 CPU/端序/ABI、libc、加载器、动态依赖、编译器、SHA256 和最低兼容要求。打包会拒绝与二进制内容或版本不匹配的报告。
 
 源码编译不下载依赖。打包工具额外使用宿主机 Python 3 统一归档顺序、时间、权限和所有者；目标程序仍是纯 C11。完整构建与 SDK 用法见 [编译说明](docs/build.md)、[ARMv5/OpenWrt/Buildroot](docs/embedded-builds.md)。最初本地验收时托管 CI 为 CI_NOT_RUN；随后实际运行的失败与 Node.js 24/GCC/MSVC 修复见编译说明，本轮修改仍待远程重跑。真实云服务写入为 **PENDING**，不能把工作流静态检查或 Mock 回归写成线上通过。
 

@@ -1,4 +1,4 @@
-# 构建、检查与打包（v0.2.0）
+# 构建、检查与打包（v0.2.1）
 
 需要 CMake ≥ 3.20、C11 编译器、构建工具及平台二进制检查工具。打包额外需要 Python 3；Python 不属于 CipherDNS 运行依赖。源码依赖固定并内置：Mbed TLS 3.6.7、jsmn v1.1.0、inih r62，见 `third_party/README.md`。配置/构建不自动下载密码学依赖。
 
@@ -9,7 +9,7 @@
 ./build-local.sh --help
 ```
 
-默认 BOTH、MinSizeRel、mostly-static、v0.2.0；原生执行 CTest，交叉构建默认不执行测试。`--no-tests` 关闭单元/集成测试目标。用 `--cmake-arg ARG` 传入单个 CMake 参数，可重复。`--target linux-armv5` 直接支持 `CIPHERDNS_TOOLCHAIN_ROOT=/path/to/sdk`，更多 SDK/OpenWrt/Buildroot 示例见 `embedded-builds.md`。
+默认 BOTH、MinSizeRel、mostly-static、v0.2.1；原生执行 CTest，交叉构建默认不执行测试。`--no-tests` 关闭单元/集成测试目标。用 `--cmake-arg ARG` 传入单个 CMake 参数，可重复。`--target linux-armv5` 直接支持 `CIPHERDNS_TOOLCHAIN_ROOT=/path/to/sdk`，更多 SDK/OpenWrt/Buildroot 示例见 `embedded-builds.md`。
 
 直接使用 CMake：
 
@@ -42,8 +42,8 @@ Linux static 在配置阶段实际链接 libc 探测程序，最后必须没有 
 ## 包与可重复性
 
 ```sh
-VERSION=0.2.0 TARGET=macos-arm64 BINARY=build/v02/cipherdns scripts/package.sh
-(cd dist && shasum -a 256 -c cipherdns-0.2.0-macos-arm64.tar.gz.sha256)
+VERSION=0.2.1 TARGET=macos-arm64 BINARY=build/v02/cipherdns scripts/package.sh
+(cd dist && shasum -a 256 -c cipherdns-0.2.1-macos-arm64.tar.gz.sha256)
 ```
 
 默认模式包名省略 BOTH；其他模式必须保留 CLIENT/SERVER 以防覆盖。通过 `OUTPUT_DIR=/absolute/output` 指定测试输出。脚本只修改输出目录；锁、私有暂存与 trap 清理保持启用；同名同内容为 no-op，同名不同内容失败并保留旧包。二进制与报告 SHA256、包版本必须匹配，CLIENT/SERVER 必须出现在对应 TARGET 名中；过期/不完整报告拒绝打包，复制到暂存区后再次核对二进制与报告。
@@ -69,6 +69,35 @@ Tag `v*` 触发 Release。所有矩阵成员成功后，要求 11 个默认包�
 本地 `bash -n build-local.sh scripts/package.sh`、Actionlint 1.7.12 工作流静态检查、重复打包/固定元数据/整包 SHA256、过期报告及版本不符拒绝检查实际通过。Mbed TLS 原始发布归档 SHA256 与固定值一致，所保留 include/library/3rdparty 的 314 个上游文件逐字节比较一致。
 
 最初 v0.2.0 本地验收时，远程状态为 CI_NOT_RUN。随后 [CI 运行 39397118227](https://github.com/anysoft/CipherDNS/actions/runs/39397118227) 实际失败：Linux 原生/Sanitizer 的 GCC 路径拼接告警被 `-Werror` 拒绝，Windows 在配置阶段失败。该次运行的六个 musl 交叉任务、ARMv5 GCC 和两种 macOS 原生任务已成功；这不表示本次修改后的远程 CI 已验收。
+
+### Release 报告换行与已有 Tag 的恢复
+
+`scripts/verify-release.py dist` 在 UTF-8 解码后把 CRLF 规范化为 LF，再验证包根目录中的可执行文件和 `link-report.txt`。报告必须各有唯一、完整的 `verification: PASS` 和匹配二进制的 `sha256: <摘要>` 行；缺文件、重复成员、非普通文件、错误目录、非法归档、无效 UTF-8 或不匹配字段均返回非零，并输出包名和原因。全部包通过后才生成 `BUILD-REPORTS.txt`，顺序和分隔格式保留，报告内容使用 LF。外部包校验和、包名/格式及 `SHA256SUMS` 生成流程保持不变。
+
+CI 的 Sanitizer 任务运行 Python 标准库回归测试，无需额外 Python 依赖：
+
+```sh
+python3 -B -m unittest discover -s tests -p 'test_verify_release.py' -v
+```
+
+针对失败的 [v0.2.0 Release 运行](https://github.com/anysoft/CipherDNS/actions/runs/39409802734)，已下载全部 11 个 Artifact，通过官方 API 的外层 SHA256、大小及 ZIP CRC 验证，并检查内部 15 个包的外部摘要。旧逻辑为 13/15 通过，仅 Windows BOTH/CLIENT 的 CRLF 报告失败；修复后的脚本为 15/15 通过。24 项自动化用例还覆盖哈希不符、FAIL、缺文件、损坏 ZIP/TAR 等拒绝路径。
+
+现有 `v0.2.0` 指向 `e7856fd5dc6da2ee9399cbcd3a66fe48db025068`，不得为修复发布工具而移动它。直接重跑原运行会继续使用原提交中的旧 Workflow；GitHub 的重跑语义见[官方说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)。当前 Release Workflow 没有手动恢复入口。安全恢复使用**原运行的产物**，不将修复后 HEAD 构建的二进制冒充已有 Tag：
+
+1. 审核发布工具修复；将原运行的 15 个二进制包和 15 个 `.sha256` 放入全新的暂存目录。发布前确认 `v0.2.0` 仍指向上述提交，且尚无同名 Release。
+2. 在暂存目录运行 `sha256sum -c -- *.sha256`，再从包含修复脚本的检出目录运行 `python3 scripts/verify-release.py /absolute/staging`。两步必须成功。
+3. 从原 Tag 生成源码和说明：`git archive --format=tar.gz --prefix=cipherdns-0.2.0/ -o /absolute/staging/cipherdns-0.2.0-source.tar.gz v0.2.0`；`git show v0.2.0:docs/release-v0.2.0.md > /absolute/staging/RELEASE-NOTES.md`。源码不可改用修复后的 HEAD。
+4. 在暂存目录执行 `sha256sum -- *.tar.gz *.zip BUILD-REPORTS.txt > SHA256SUMS` 和 `sha256sum -c SHA256SUMS`。验证脚本应在生成源码包之前运行，它只检查二进制包。
+5. 最后在已认证的 GitHub CLI 环境中，人工确认发布：
+
+```sh
+cd /absolute/staging
+gh release create v0.2.0 --repo anysoft/CipherDNS --verify-tag \
+  --title 'CipherDNS v0.2.0' --notes-file RELEASE-NOTES.md \
+  ./*.tar.gz ./*.zip SHA256SUMS BUILD-REPORTS.txt
+```
+
+以上是原 v0.2.0 的人工恢复方式；发布工具修复随新的 v0.2.1 Tag 使用更新后的 Workflow，已有 v0.2.0 Tag 保持不变。
 
 ### Node.js 24 Actions 与兼容要求
 

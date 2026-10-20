@@ -11,7 +11,7 @@ build_type=MinSizeRel
 build_dir=
 toolchain=
 generator=
-version=0.2.0
+version=0.2.1
 run_tests=auto
 package=true
 lock_dir=
@@ -40,7 +40,7 @@ Usage: ./build-local.sh [options]
   --build-dir DIR     Dedicated CMake build directory
   --toolchain FILE    Custom OpenWrt/Buildroot/other CMake toolchain
   --generator NAME    CMake generator (for example Ninja)
-  --version VERSION   Build and package version (default 0.2.0)
+  --version VERSION   Build and package version (default 0.2.1)
   --tests             Build tests; execute only for native builds
   --no-tests          Disable tests (native default is enabled)
   --no-package        Do not create dist/ release archive

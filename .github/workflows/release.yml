@@ -44,28 +44,10 @@ jobs:
           done
           test "$(find dist -maxdepth 1 -name '*.sha256' | wc -l)" -eq 15
           (cd dist && sha256sum -c -- *.sha256)
-          python3 - <<'PY'
-          import hashlib, pathlib, tarfile, zipfile
-          summaries = []
-          for archive in sorted(pathlib.Path('dist').glob('*')):
-              if archive.name.endswith('.tar.gz'):
-                  with tarfile.open(archive) as content:
-                      files = {pathlib.PurePosixPath(m.name).name: content.extractfile(m).read() for m in content.getmembers() if m.isfile() and pathlib.PurePosixPath(m.name).name in ('cipherdns', 'link-report.txt')}
-              elif archive.suffix == '.zip':
-                  with zipfile.ZipFile(archive) as content:
-                      files = {pathlib.PurePosixPath(n).name: content.read(n) for n in content.namelist() if pathlib.PurePosixPath(n).name in ('cipherdns.exe', 'link-report.txt')}
-              else:
-                  continue
-              binary = files.get('cipherdns', files.get('cipherdns.exe'))
-              report = files['link-report.txt'].decode()
-              assert binary is not None and '\nverification: PASS\n' in report, archive
-              assert 'sha256: ' + hashlib.sha256(binary).hexdigest() + '\n' in report, archive
-              summaries.append('=== ' + archive.name + ' ===\n' + report)
-          pathlib.Path('dist/BUILD-REPORTS.txt').write_text('\n'.join(summaries))
-          PY
+          python3 scripts/verify-release.py dist
           git archive --format=tar.gz --prefix="cipherdns-$version/" -o "dist/cipherdns-$version-source.tar.gz" HEAD
           (cd dist && sha256sum -- *.tar.gz *.zip BUILD-REPORTS.txt > SHA256SUMS)
-          cp docs/release-v0.2.0.md dist/RELEASE-NOTES.md
+          cp "docs/release-v$version.md" dist/RELEASE-NOTES.md
       - name: Publish verified artifacts
         shell: bash
         env:

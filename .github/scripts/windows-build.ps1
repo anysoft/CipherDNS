@@ -51,7 +51,7 @@ if ([string]::IsNullOrEmpty($Version)) {
     if ($env:GITHUB_REF -like 'refs/tags/v*') {
         $Version = $env:GITHUB_REF_NAME.Substring(1)
     } else {
-        $Version = '0.2.0-dev+' + $env:GITHUB_SHA.Substring(0, 12)
+        $Version = '0.2.1-dev+' + $env:GITHUB_SHA.Substring(0, 12)
     }
 }
 

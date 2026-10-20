@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #ifndef CDNS_VERSION
-#define CDNS_VERSION "0.2.0"
+#define CDNS_VERSION "0.2.1"
 #endif
 static void usage(void) {
     puts("CipherDNS " CDNS_VERSION

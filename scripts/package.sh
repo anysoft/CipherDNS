@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 umask 027
 readonly REPO_ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
-version=${VERSION:-0.2.0}
+version=${VERSION:-0.2.1}
 target=${TARGET:?Set TARGET, for example linux-arm64-musl-static}
 binary=${BINARY:?Set BINARY}
 output_dir=${OUTPUT_DIR:-"$REPO_ROOT/dist"}
@@ -77,7 +77,7 @@ done
 for hook in on-change.sh on-change.ps1 ctunnel-update.sh ctunnel-on-change.sh; do
   if [[ -f $REPO_ROOT/examples/hooks/$hook ]]; then cp -- "$REPO_ROOT/examples/hooks/$hook" "$stage/$name/examples/hooks/"; fi
 done
-for document in build.md provider-apis.md integration-tests.md embedded-builds.md troubleshooting.md validation.md validation-cross.json release-v0.2.0.md ctunnel-hook.md audit-v0.2.0.md validation-v0.1.0.md validation-cross-v0.1.0.json; do
+for document in build.md provider-apis.md integration-tests.md embedded-builds.md troubleshooting.md validation.md validation-cross.json release-v0.2.0.md release-v0.2.1.md ctunnel-hook.md audit-v0.2.0.md validation-v0.1.0.md validation-cross-v0.1.0.json; do
   if [[ -f $REPO_ROOT/docs/$document ]]; then cp -- "$REPO_ROOT/docs/$document" "$stage/$name/docs/"; fi
 done
 mkdir -- "$stage/$name/scripts"
