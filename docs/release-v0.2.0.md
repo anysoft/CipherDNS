@@ -16,9 +16,9 @@ v0.2.0 在现有 C11、AES-256-GCM 和 DNS TXT 协议上补充部署诊断、Pro
 最终本地测试、体积和跨架构结果以本版本 `validation.md`、`validation-cross.json` 为准。`PASS` 表示实际执行通过；`FAIL` 表示实际失败；`PENDING` 表示尚未执行；`SKIP` 表示环境限制跳过。Mock 通过不等于云服务验收。
 
 - 三家真实 API 写入/权限与最终 DNS 传播：**PENDING**，本轮没有真实账号验收凭据。
-- ARMv5 GCC：本机缺省 GCC 尝试 **FAIL（未安装 GCC）**，下载并 SHA256 校验固定 Bootlin GCC SDK 后再次尝试 **FAIL（Linux x86_64 编译器在 macOS ARM64 上 exec format error）**；没有运行中的 Linux Docker，CI 的固定 Bootlin GCC 路径 **PENDING / CI_NOT_RUN**。没有 ARMv5 成功包或占位包。
+- ARMv5 GCC：macOS ARM64 本机不能执行 Linux x86_64 SDK；后续 [GitHub CI](https://github.com/anysoft/CipherDNS/actions/runs/39407530993/job/118576989389) 已通过固定 Bootlin GCC SDK 的 soft-float 静态构建、架构/链接检查和打包。ARMv5 实机运行仍为 **PENDING**。
 - OpenWrt、Buildroot glibc 2.26、uClibc、光猫实机和其他交叉目标运行：**PENDING**。
-- GitHub Actions/Release：**CI_NOT_RUN**。2026-10-20 只读 API 查询 workflows/runs/artifacts 均为 0，releases 为空；未推送、未创建 Tag、未发布 Release。
+- GitHub Actions：修复后的提交 `7e624fb` 已通过 [完整构建矩阵](https://github.com/anysoft/CipherDNS/actions/runs/39407530993)，12/12 任务成功，包括 Windows 原生三模式、Linux/macOS、Sanitizer、六个 musl 目标和 ARMv5。正式 Release 由 `v0.2.0` Tag 触发完整重建，全部必需包、校验和及报告验证成功后发布；以本次 Release 工作流和附件为准。
 - 真实连续 24 小时 soak 与目标设备内存峰值：**PENDING**；提供脚本，不把短回归称为 24 小时测试。
 
 Client-only macOS ARM64 为 91,528 字节（第一阶段 74,504 字节），主要受到新增 doctor 诊断和 Mach-O 16 KiB 段对齐影响。IPO/`-Oz` 试验没有取得有意义的文件体积改善，保持原有编译策略；“Client 体积不明显增长”目标仍需继续优化。Client 没有引入 TLS、Provider 或额外共享密码库。
