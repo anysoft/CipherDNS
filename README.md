@@ -223,7 +223,7 @@ GitHub Actions 配置了原生 Linux/macOS ARM64/macOS x86_64/Windows x86_64 测
 
 Tag `v*` 触发 Release，所有必需矩阵成员成功后才发布；失败架构不生成占位包。默认 BOTH 包名为 `cipherdns-0.2.0-<platform>.tar.gz`，Linux 平台标签包含 `musl-static` 或 `glibc-mostly-static`，Windows 使用 `.zip`；单角色另含 `CLIENT` / `SERVER` 标签。包包含示例、文档、版本、许可证、内部 SHA256 和依赖报告；发布附总 `SHA256SUMS`、Release Notes 和 `BUILD-REPORTS`。报告记录 CPU/端序/ABI、libc、加载器、动态依赖、编译器、SHA256 和最低兼容要求。打包会拒绝与二进制内容或版本不匹配的报告。
 
-源码编译不下载依赖。打包工具额外使用宿主机 Python 3 统一归档顺序、时间、权限和所有者；目标程序仍是纯 C11。完整构建与 SDK 用法见 [编译说明](docs/build.md)、[ARMv5/OpenWrt/Buildroot](docs/embedded-builds.md)。本次 GitHub 托管 CI 状态为 **CI_NOT_RUN**，真实云服务写入为 **PENDING**，不能把工作流静态检查或 Mock 回归写成线上通过。
+源码编译不下载依赖。打包工具额外使用宿主机 Python 3 统一归档顺序、时间、权限和所有者；目标程序仍是纯 C11。完整构建与 SDK 用法见 [编译说明](docs/build.md)、[ARMv5/OpenWrt/Buildroot](docs/embedded-builds.md)。最初本地验收时托管 CI 为 CI_NOT_RUN；随后实际运行的失败与 Node.js 24/GCC/MSVC 修复见编译说明，本轮修改仍待远程重跑。真实云服务写入为 **PENDING**，不能把工作流静态检查或 Mock 回归写成线上通过。
 
 ## 稳定性与资源测量
 

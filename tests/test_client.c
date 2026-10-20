@@ -6,6 +6,7 @@
 #endif
 #include "cipherdns/client.h"
 #include "cipherdns/dns.h"
+#include "test_path.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,23 @@
             return 1;                                                                              \
         }                                                                                          \
     } while (0)
+
+static int path_tests(void) {
+    char exact[10], guarded[10] = "unchanged", overlong[128];
+    CHECK(!cdns_test_path_join(exact, sizeof exact, "/tmp", "/file"));
+    CHECK(!strcmp(exact, "/tmp/file")); /* Includes exactly one byte for NUL. */
+    CHECK(cdns_test_path_join(guarded, sizeof guarded - 1, "/tmp", "/file"));
+    CHECK(!strcmp(guarded, "unchanged"));
+    memset(overlong, 'x', sizeof overlong - 1);
+    overlong[sizeof overlong - 1] = '\0';
+    CHECK(cdns_test_path_join(guarded, sizeof guarded, overlong, "/state"));
+    CHECK(!strcmp(guarded, "unchanged"));
+    CHECK(cdns_test_path_join(guarded, sizeof guarded, "/tmp", overlong));
+    CHECK(!strcmp(guarded, "unchanged"));
+    CHECK(cdns_test_path_join(guarded, 0, "", ""));
+    CHECK(!strcmp(guarded, "unchanged"));
+    return 0;
+}
 
 static void put16(unsigned char *p, unsigned value) {
     p[0] = (unsigned char)(value >> 8);
@@ -204,22 +222,23 @@ int main(void) {
     CHECK(mkdtemp(directory));
 #endif
     CHECK(!cdns_platform_init());
+    CHECK(!path_tests());
     CHECK(!dns_tests());
     CHECK(!probe_tests());
     memset(&config, 0, sizeof config);
     memset(&state, 0, sizeof state);
     snprintf(config.domain, sizeof config.domain, "example.com");
-    snprintf(config.state_file, sizeof config.state_file, "%s/state", directory);
+    CHECK(!cdns_test_path_join(config.state_file, sizeof config.state_file, directory, "/state"));
     /* Spaces and shell punctuation are passed literally as a single argument. */
-    snprintf(config.current_file, sizeof config.current_file, "%s/current $(echo unused).json",
-             directory);
+    CHECK(!cdns_test_path_join(config.current_file, sizeof config.current_file, directory,
+                              "/current $(echo unused).json"));
 #ifdef _WIN32
-    snprintf(config.hook, sizeof config.hook, "%s/hook.ps1", directory);
+    CHECK(!cdns_test_path_join(config.hook, sizeof config.hook, directory, "/hook.ps1"));
 #else
-    snprintf(config.hook, sizeof config.hook, "%s/hook.sh", directory);
+    CHECK(!cdns_test_path_join(config.hook, sizeof config.hook, directory, "/hook.sh"));
 #endif
-    snprintf(counter, sizeof counter, "%s/calls", directory);
-    snprintf(lockfile, sizeof lockfile, "%s/lock", directory);
+    CHECK(!cdns_test_path_join(counter, sizeof counter, directory, "/calls"));
+    CHECK(!cdns_test_path_join(lockfile, sizeof lockfile, directory, "/lock"));
     config.hook_timeout = 5;
     config.check_timeout = 1;
     CHECK(!write_hook(config.hook, 0));
@@ -271,7 +290,8 @@ int main(void) {
     CHECK(!write_hook(config.hook, 0));
     config.hook_timeout = 5;
     foreign = config;
-    snprintf(foreign.state_file, sizeof foreign.state_file, "%s/missing/state", directory);
+    CHECK(!cdns_test_path_join(foreign.state_file, sizeof foreign.state_file, directory,
+                              "/missing/state"));
     CHECK(cdns_client_step(&foreign, key, &state, txt, err, sizeof err));
     CHECK(state.cache_dirty && cdns_address_equal(&state.applied, &first));
     CHECK(call_count(counter) == 4);

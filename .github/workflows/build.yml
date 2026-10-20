@@ -18,7 +18,9 @@ jobs:
   sanitizers:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Check scripts and run AddressSanitizer / UndefinedBehaviorSanitizer
         shell: bash
         env:
@@ -31,9 +33,10 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCIPHERDNS_LINK=dynamic -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined' 2>&1 | tee configure.log
           cmake --build build --parallel 2>&1 | tee build.log
           ctest --test-dir build --output-on-failure 2>&1 | tee tests.log
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
+          archive: true
           name: logs-linux-sanitizers
           path: |
             *.log
@@ -51,7 +54,9 @@ jobs:
           - {runner: macos-15-intel, name: macos-x86_64, arch: x86_64}
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build and test each mode
         shell: bash
         env:
@@ -82,14 +87,16 @@ jobs:
           case "$GITHUB_REF" in refs/tags/v*) version=${GITHUB_REF_NAME#v};; esac
           VERSION="$version" TARGET="$PACKAGE_TARGET" BINARY=build-BOTH/cipherdns scripts/package.sh
           VERSION="$version" TARGET="$PACKAGE_TARGET-CLIENT" BINARY=build-CLIENT/cipherdns scripts/package.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          archive: true
           name: package-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
+          archive: true
           name: logs-${{ matrix.name }}
           path: |
             *.log
@@ -110,8 +117,10 @@ jobs:
           - {name: linux-mips-musl-static, arch: mips, triple: mips-linux-musleabi, flags: '-mcpu=mips32'}
           - {name: linux-mipsel-musl-static, arch: mipsel, triple: mipsel-linux-musleabi, flags: '-mcpu=mips32'}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .toolchains/zig-download.tar.xz
@@ -153,14 +162,16 @@ jobs:
             ctest --test-dir build --output-on-failure 2>&1 | tee tests.log
           fi
           VERSION="$version" TARGET="$PACKAGE_TARGET" BINARY=build/cipherdns scripts/package.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          archive: true
           name: package-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
+          archive: true
           name: logs-${{ matrix.name }}
           path: |
             *.log
@@ -171,8 +182,10 @@ jobs:
   armv5:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .toolchains/armv5-sdk.tar.xz
           key: bootlin-${{ env.ARMV5_SDK }}-${{ env.ARMV5_SHA256 }}
@@ -199,14 +212,16 @@ jobs:
           case "$GITHUB_REF" in refs/tags/v*) version=${GITHUB_REF_NAME#v};; esac
           ./build-local.sh --target linux-armv5 --link static --no-package --no-tests --version "$version" 2>&1 | tee build.log
           VERSION="$version" TARGET=linux-armv5-musl-static BINARY=build/linux-armv5-BOTH-static/cipherdns scripts/package.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          archive: true
           name: package-linux-armv5-musl-static
           path: dist/*
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
+          archive: true
           name: logs-linux-armv5
           path: |
             *.log
@@ -216,13 +231,13 @@ jobs:
   windows:
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build and test with native VS 2022 compiler
-        shell: cmd
+        shell: pwsh
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
-          if errorlevel 1 exit /b 1
-          powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $version='0.2.0-dev+'+$env:GITHUB_SHA.Substring(0,12); if ($env:GITHUB_REF -like 'refs/tags/v*') {$version=$env:GITHUB_REF_NAME.Substring(1)}; foreach ($mode in @('BOTH','SERVER','CLIENT')) { cmake -S . -B build-$mode -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DCIPHERDNS_MODE=$mode -DCIPHERDNS_VERSION=$version -DCIPHERDNS_LINK=static 2>&1 | Tee-Object configure-$mode.log; if ($LASTEXITCODE) {exit $LASTEXITCODE}; cmake --build build-$mode --parallel 2>&1 | Tee-Object build-$mode.log; if ($LASTEXITCODE) {exit $LASTEXITCODE}; ctest --test-dir build-$mode --output-on-failure 2>&1 | Tee-Object test-$mode.log; if ($LASTEXITCODE) {exit $LASTEXITCODE} }"
+          & ./.github/scripts/windows-build.ps1
       - name: Package default and Client mode
         shell: bash
         run: |
@@ -231,17 +246,22 @@ jobs:
           case "$GITHUB_REF" in refs/tags/v*) version=${GITHUB_REF_NAME#v};; esac
           VERSION="$version" TARGET=windows-x86_64 BINARY=build-BOTH/cipherdns.exe scripts/package.sh
           VERSION="$version" TARGET=windows-x86_64-CLIENT BINARY=build-CLIENT/cipherdns.exe scripts/package.sh
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          archive: true
           name: package-windows-x86_64
           path: dist/*
           if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
+          archive: true
           name: logs-windows-x86_64
           path: |
             *.log
+            build-*/CMakeCache.txt
+            build-*/compile_commands.json
+            build-*/CMakeFiles/*/CMakeCCompiler.cmake
             build-*/CMakeFiles/CMakeConfigureLog.yaml
             build-*/*.link-report.txt
             build-*/Testing/Temporary/LastTest.log

@@ -6,6 +6,7 @@
 #endif
 #include "cipherdns/client.h"
 #include "cipherdns/dns.h"
+#include "test_path.h"
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -173,13 +174,14 @@ int main(int argc, char **argv) {
 #endif
     CHECK(!cdns_platform_init());
     snprintf(c.domain, sizeof c.domain, "example.com");
-    snprintf(c.state_file, sizeof c.state_file, "%s/state", directory);
-    snprintf(c.current_file, sizeof c.current_file, "%s/current $(echo unused).json", directory);
-    snprintf(calls, sizeof calls, "%s/calls", directory);
+    CHECK(!cdns_test_path_join(c.state_file, sizeof c.state_file, directory, "/state"));
+    CHECK(!cdns_test_path_join(c.current_file, sizeof c.current_file, directory,
+                              "/current $(echo unused).json"));
+    CHECK(!cdns_test_path_join(calls, sizeof calls, directory, "/calls"));
 #ifdef _WIN32
-    snprintf(c.hook, sizeof c.hook, "%s/hook.ps1", directory);
+    CHECK(!cdns_test_path_join(c.hook, sizeof c.hook, directory, "/hook.ps1"));
 #else
-    snprintf(c.hook, sizeof c.hook, "%s/hook.sh", directory);
+    CHECK(!cdns_test_path_join(c.hook, sizeof c.hook, directory, "/hook.sh"));
 #endif
     c.hook_timeout = 3;
     CHECK(!write_hook(c.hook, 0));
@@ -244,8 +246,8 @@ int main(int argc, char **argv) {
                             "(exec 3<>\"${0%/*}/release\"; printf ready > \"${0%/*}/ready\"; "
                             "read token <&3) &\n"
                             "while [ ! -s \"${0%/*}/ready\" ]; do sleep 0.01; done\nexit 0\n";
-        snprintf(ready, sizeof ready, "%s/ready", directory);
-        snprintf(fifo, sizeof fifo, "%s/release", directory);
+        CHECK(!cdns_test_path_join(ready, sizeof ready, directory, "/ready"));
+        CHECK(!cdns_test_path_join(fifo, sizeof fifo, directory, "/release"));
         CHECK(!mkfifo(fifo, 0600));
         CHECK(!cdns_atomic_write(c.hook, body, strlen(body)));
         CHECK(!chmod(c.hook, 0700));

@@ -68,6 +68,44 @@ Tag `v*` 触发 Release。所有矩阵成员成功后，要求 11 个默认包�
 
 本地 `bash -n build-local.sh scripts/package.sh`、Actionlint 1.7.12 工作流静态检查、重复打包/固定元数据/整包 SHA256、过期报告及版本不符拒绝检查实际通过。Mbed TLS 原始发布归档 SHA256 与固定值一致，所保留 include/library/3rdparty 的 314 个上游文件逐字节比较一致。
 
-2026-10-20 实际只读查询 GitHub API：仓库 workflows、runs、artifacts 均为 0，releases 为空；本机没有 `gh`。所以远程 CI/Release 状态为 **CI_NOT_RUN**，本地检查不能替代远程验收。
+最初 v0.2.0 本地验收时，远程状态为 CI_NOT_RUN。随后 [CI 运行 39397118227](https://github.com/anysoft/CipherDNS/actions/runs/39397118227) 实际失败：Linux 原生/Sanitizer 的 GCC 路径拼接告警被 `-Werror` 拒绝，Windows 在配置阶段失败。该次运行的六个 musl 交叉任务、ARMv5 GCC 和两种 macOS 原生任务已成功；这不表示本次修改后的远程 CI 已验收。
+
+### Node.js 24 Actions 与兼容要求
+
+2026-10-20 核对官方最新稳定 Release、标签所指的完整 Commit，以及该 Commit 的 `action.yml`；以下四者均使用 `runs.using: node24`。工作流不使用不安全 Node 版本兼容开关。
+
+| Action | 稳定版本 | 固定 Commit SHA |
+|---|---|---|
+| [checkout](https://github.com/actions/checkout/releases/tag/v7.0.1) | v7.0.1 | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
+| [upload-artifact](https://github.com/actions/upload-artifact/releases/tag/v7.0.2) | v7.0.2 | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
+| [download-artifact](https://github.com/actions/download-artifact/releases/tag/v8.0.2) | v8.0.2 | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |
+| [cache](https://github.com/actions/cache/releases/tag/v6.1.0) | v6.1.0 | `55cc8345863c7cc4c66a329aec7e433d2d1c52a9` |
+
+Node.js 24 版本要求 Actions Runner ≥ 2.327.1，当前 GitHub 托管 runner 标签适用。checkout 使用 Git ≥ 2.18 才能正常克隆；旧 Git 的 REST 下载回退不能满足 Release 的 `git archive`。checkout v6+ 的持久凭据放在 `RUNNER_TEMP`，通过 Git `includeIf` 引用；在 Docker container action 中使用认证 Git 另需 Runner ≥ 2.329.0。本项目没有这种容器流程，并设置 `persist-credentials: false`，发布通过独立 `GH_TOKEN` 认证。保留最小 `contents: read` 和默认 safe.directory 处理；源码执行权限仍由 Git 跟踪。
+
+upload v7 的 `archive: false` 模式会忽略 Artifact 名称，因此显式保留 `archive: true`，现有多文件 `package-*` / `logs-*` 名称保持不变。download v8 保留 `pattern: package-*`、`merge-multiple: true`，显式使用 `skip-decompress: false` 和 `digest-mismatch: error`；摘要不符即失败。外层 Artifact 不保留原始文件权限，内部 tar/zip 的权限不受影响。cache 的 path/key/restore-keys 语义继续适用。
+
+### GCC 测试路径与 Windows MSVC
+
+`tests/test_path.h` 提供仅用于测试的路径拼接：先检查目录与后缀长度以及 NUL 容量，再复制；失败不修改输出。client/reliability/e2e 保持原路径和缓冲区大小；负向用例覆盖超长目录/后缀、少一个字节和零容量，并检查恰好足够的容量。不关闭 `-Werror`、format-truncation 或 Fortify。
+
+Windows 的第 25 行实际是 `CIPHERDNS_MODE` 校验，LINK 校验在第 28 行。PowerShell 原生参数探针复现了旧的未引用 `-DCIPHERDNS_MODE=$mode` / VERSION 参数被原样传递，`LINK=static` 本身正常。新流程使用 `shell: pwsh` 和 `.github/scripts/windows-build.ps1`，通过 vswhere 及微软支持的 Launch-VsDevShell 初始化 VS 2022 x64，以数组传递完整的带类型 CMake 参数。配置后核对缓存、MSVC/x64 编译器和每条编译命令的 `/MT`，然后运行 BOTH/SERVER/CLIENT 的构建、CTest 与版本检查；原有 CMake 合法性校验保留。
+
+MSVC 的 static 表示静态 C 运行库 `/MT`（Debug 为 `/MTd`），仍依赖 Windows 系统 DLL。CI 当前为 MinSizeRel，因此检查 `/MT` 并拒绝 `/MD`。失败日志含工具链初始化、配置/构建/测试、缓存和编译器描述；不输出整个环境变量集合。
+
+```sh
+# Ubuntu 24.04，已安装 GCC 13/CMake/Ninja：
+CC=gcc-13 cmake -S . -B build-ci-gcc13 -G Ninja \
+  -DCMAKE_BUILD_TYPE=MinSizeRel -DCIPHERDNS_MODE=BOTH \
+  -DCIPHERDNS_WARNINGS_AS_ERRORS=ON -DCMAKE_C_FLAGS=-D_FORTIFY_SOURCE=2
+cmake --build build-ci-gcc13 --parallel
+ctest --test-dir build-ci-gcc13 -LE integration --output-on-failure
+```
+
+本轮在 Ubuntu 24.04 ARM64 容器中实际使用 GCC 13.3.0：旧 client/reliability/e2e 源码均复现 format-truncation，修改后在保留 `-Werror` 和 `_FORTIFY_SOURCE=2` 时均无告警。完整 MinSizeRel BOTH 8/8、SERVER 5/5、CLIENT 4/4 离线 CTest 通过；Debug ASan/UBSan（含 detect_leaks）8/8 通过。Apple Clang 对相关三项普通/Sanitizer 回归同样通过。新负向路径用例随 client 测试执行。
+
+在已安装 VS 2022 C++ x64 工具链的 Windows 上可执行 `pwsh -NoProfile -File .github/scripts/windows-build.ps1 -Version 0.2.0`。PowerShell 7.6.7 语法检查、原生参数探针和从空目录生成的模拟工具链验证通过，覆盖三个模式、含空格路径、非零退出码、错误缓存和 `/MD` 拒绝。本机模拟验证不等于真实 MSVC 执行；本次修改后的 GitHub Windows/Artifact/Release 流程仍需推送后验收。Actionlint 1.7.12 及 Artifact 名称/下载匹配规则对照检查通过。此任务不自动推送、创建 Tag 或发布 Release。
+
+兼容参考：[checkout README](https://github.com/actions/checkout/tree/3d3c42e5aac5ba805825da76410c181273ba90b1)、[upload v7](https://github.com/actions/upload-artifact/releases/tag/v7.0.0)、[download v8](https://github.com/actions/download-artifact/releases/tag/v8.0.0)、[Visual Studio Developer PowerShell](https://learn.microsoft.com/en-us/visualstudio/ide/reference/command-prompt-powershell?view=vs-2022)、[MSVC /MT](https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170)。
 
 参考：[CMake Toolchains](https://cmake.org/cmake/help/latest/manual/cmake-toolchains.7.html)、[Zig 固定版本下载索引](https://ziglang.org/download/index.json)、[Bootlin ARMv5 SDK 校验](https://toolchains.bootlin.com/downloads/releases/toolchains/armv5-eabi/tarballs/armv5-eabi--musl--stable-2025.08-1.sha256)、[GitHub runner-images](https://github.com/actions/runner-images)。

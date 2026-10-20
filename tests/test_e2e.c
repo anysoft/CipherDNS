@@ -9,6 +9,7 @@
 #include "cipherdns/dns.h"
 #include "cipherdns/http.h"
 #include "cipherdns/json.h"
+#include "test_path.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -183,14 +184,14 @@ int main(void) {
     snprintf(c.token, sizeof c.token, "test-token");
     c.ttl = 60;
     c.hook_timeout = 5;
-    snprintf(c.state_file, sizeof c.state_file, "%s/state", directory);
-    snprintf(c.current_file, sizeof c.current_file, "%s/current.json", directory);
+    CHECK(!cdns_test_path_join(c.state_file, sizeof c.state_file, directory, "/state"));
+    CHECK(!cdns_test_path_join(c.current_file, sizeof c.current_file, directory, "/current.json"));
 #ifdef _WIN32
-    snprintf(c.hook, sizeof c.hook, "%s/hook.ps1", directory);
+    CHECK(!cdns_test_path_join(c.hook, sizeof c.hook, directory, "/hook.ps1"));
 #else
-    snprintf(c.hook, sizeof c.hook, "%s/hook.sh", directory);
+    CHECK(!cdns_test_path_join(c.hook, sizeof c.hook, directory, "/hook.sh"));
 #endif
-    snprintf(counter, sizeof counter, "%s/calls", directory);
+    CHECK(!cdns_test_path_join(counter, sizeof counter, directory, "/calls"));
     memset(&client, 0, sizeof client);
     CHECK(!hook_write(c.hook, 0));
     CHECK(cdns_server_step(&c, key, &synced, &has_synced, &observed, err, sizeof err) == 1);
