@@ -1,0 +1,247 @@
+name: Build and test
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+
+env:
+  ZIG_VERSION: '0.15.2'
+  ZIG_SHA256: 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
+  ARMV5_SDK: armv5-eabi--musl--stable-2025.08-1
+  ARMV5_SHA256: 8cdb4ad70c6b5a66427fa3315fe3ddde1c19c90232674dec59045e04d2a36cf1
+
+jobs:
+  sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Check scripts and run AddressSanitizer / UndefinedBehaviorSanitizer
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          set -Eeuo pipefail
+          bash -n build-local.sh scripts/package.sh scripts/soak-test.sh scripts/measure-resources.sh examples/hooks/ctunnel-update.sh
+          sh -n examples/hooks/on-change.sh
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCIPHERDNS_LINK=dynamic -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined' 2>&1 | tee configure.log
+          cmake --build build --parallel 2>&1 | tee build.log
+          ctest --test-dir build --output-on-failure 2>&1 | tee tests.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: logs-linux-sanitizers
+          path: |
+            *.log
+            build/CMakeFiles/CMakeConfigureLog.yaml
+            build/*.link-report.txt
+            build/Testing/Temporary/LastTest.log
+
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, name: linux-x86_64-glibc-mostly-static, arch: x86_64}
+          - {runner: macos-15, name: macos-arm64, arch: arm64}
+          - {runner: macos-15-intel, name: macos-x86_64, arch: x86_64}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build and test each mode
+        shell: bash
+        env:
+          EXPECT_ARCH: ${{ matrix.arch }}
+        run: |
+          set -Eeuo pipefail
+          test "$(uname -m)" = "$EXPECT_ARCH"
+          version="0.2.0-dev+${GITHUB_SHA:0:12}"
+          case "$GITHUB_REF" in refs/tags/v*) version=${GITHUB_REF_NAME#v};; esac
+          for mode in BOTH SERVER CLIENT; do
+            cmake -S . -B "build-$mode" -DCMAKE_BUILD_TYPE=MinSizeRel -DCIPHERDNS_MODE="$mode" -DCIPHERDNS_VERSION="$version" 2>&1 | tee "configure-$mode.log"
+            cmake --build "build-$mode" --parallel 2>&1 | tee "build-$mode.log"
+            ctest --test-dir "build-$mode" --output-on-failure 2>&1 | tee "test-$mode.log"
+            "build-$mode/cipherdns" --version
+          done
+          nm build-CLIENT/cipherdns > client-symbols.log
+          if grep -E '[[:space:]]_?(cdns_http_|cdns_provider_|mbedtls_ssl_|mbedtls_x509_)' client-symbols.log; then
+            echo 'CLIENT includes server-only symbols' >&2
+            exit 1
+          fi
+      - name: Package default and Client mode
+        shell: bash
+        env:
+          PACKAGE_TARGET: ${{ matrix.name }}
+        run: |
+          set -Eeuo pipefail
+          version="0.2.0-dev+${GITHUB_SHA:0:12}"
+          case "$GITHUB_REF" in refs/tags/v*) version=${GITHUB_REF_NAME#v};; esac
+          VERSION="$version" TARGET="$PACKAGE_TARGET" BINARY=build-BOTH/cipherdns scripts/package.sh
+          VERSION="$version" TARGET="$PACKAGE_TARGET-CLIENT" BINARY=build-CLIENT/cipherdns scripts/package.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: logs-${{ matrix.name }}
+          path: |
+            *.log
+            build-*/CMakeFiles/CMakeConfigureLog.yaml
+            build-*/*.link-report.txt
+            build-*/Testing/Temporary/LastTest.log
+
+  cross:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: linux-x86_64-musl-static, arch: x86_64, triple: x86_64-linux-musl, flags: ''}
+          - {name: linux-i686-musl-static, arch: i686, triple: x86-linux-musl, flags: '-mcpu=pentium4'}
+          - {name: linux-arm64-musl-static, arch: aarch64, triple: aarch64-linux-musl, flags: ''}
+          - {name: linux-armv7-musl-static, arch: armv7, triple: arm-linux-musleabihf, flags: '-mcpu=cortex_a7'}
+          - {name: linux-mips-musl-static, arch: mips, triple: mips-linux-musleabi, flags: '-mcpu=mips32'}
+          - {name: linux-mipsel-musl-static, arch: mipsel, triple: mipsel-linux-musleabi, flags: '-mcpu=mips32'}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            .toolchains/zig-download.tar.xz
+            ~/.cache/zig
+          key: zig-linux-${{ env.ZIG_VERSION }}-${{ env.ZIG_SHA256 }}-${{ matrix.arch }}-${{ hashFiles('src/**', 'include/**', 'third_party/**', 'CMakeLists.txt', 'cmake/**') }}
+          restore-keys: |
+            zig-linux-${{ env.ZIG_VERSION }}-${{ env.ZIG_SHA256 }}-${{ matrix.arch }}-
+      - name: Prepare pinned Zig compiler
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p .toolchains
+          archive=.toolchains/zig-download.tar.xz
+          if [[ ! -f $archive ]]; then
+            curl --fail --location --retry 3 --connect-timeout 15 --max-time 300 "https://ziglang.org/download/$ZIG_VERSION/zig-x86_64-linux-$ZIG_VERSION.tar.xz" -o "$archive.tmp"
+            mv "$archive.tmp" "$archive"
+          fi
+          printf '%s  %s\n' "$ZIG_SHA256" "$archive" | sha256sum -c -
+          tar -xJf "$archive" -C .toolchains
+          echo "CIPHERDNS_ZIG=$GITHUB_WORKSPACE/.toolchains/zig-x86_64-linux-$ZIG_VERSION/zig" >> "$GITHUB_ENV"
+      - name: Cross compile, inspect and package
+        shell: bash
+        env:
+          CIPHERDNS_ARCH: ${{ matrix.arch }}
+          CIPHERDNS_ZIG_TARGET: ${{ matrix.triple }}
+          CIPHERDNS_ARCH_FLAGS: ${{ matrix.flags }}
+          PACKAGE_TARGET: ${{ matrix.name }}
+        run: |
+          set -Eeuo pipefail
+          "$CIPHERDNS_ZIG" version
+          version="0.2.0-dev+${GITHUB_SHA:0:12}"
+          case "$GITHUB_REF" in refs/tags/v*) version=${GITHUB_REF_NAME#v};; esac
+          cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/zig-linux.cmake -DCMAKE_BUILD_TYPE=MinSizeRel -DCIPHERDNS_VERSION="$version" -DCIPHERDNS_LINK=static -DCIPHERDNS_LIBC=musl -DCIPHERDNS_BUILD_TESTS=OFF -DCIPHERDNS_INTEGRATION_TESTS=OFF -DCMAKE_EXE_LINKER_FLAGS=-s 2>&1 | tee configure.log
+          cmake --build build --parallel 2>&1 | tee build.log
+          if [[ $CIPHERDNS_ARCH == x86_64 ]]; then
+            build/cipherdns --version
+            cmake -S . -B build -DCIPHERDNS_BUILD_TESTS=ON -DCIPHERDNS_INTEGRATION_TESTS=ON
+            cmake --build build --parallel 2>&1 | tee build-tests.log
+            ctest --test-dir build --output-on-failure 2>&1 | tee tests.log
+          fi
+          VERSION="$version" TARGET="$PACKAGE_TARGET" BINARY=build/cipherdns scripts/package.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: logs-${{ matrix.name }}
+          path: |
+            *.log
+            build/CMakeFiles/CMakeConfigureLog.yaml
+            build/*.link-report.txt
+            build/Testing/Temporary/LastTest.log
+
+  armv5:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .toolchains/armv5-sdk.tar.xz
+          key: bootlin-${{ env.ARMV5_SDK }}-${{ env.ARMV5_SHA256 }}
+      - name: Prepare pinned ARMv5 GCC SDK
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p .toolchains
+          archive=.toolchains/armv5-sdk.tar.xz
+          if [[ ! -f $archive ]]; then
+            curl --fail --location --retry 3 --connect-timeout 15 --max-time 300 "https://toolchains.bootlin.com/downloads/releases/toolchains/armv5-eabi/tarballs/$ARMV5_SDK.tar.xz" -o "$archive.tmp"
+            mv "$archive.tmp" "$archive"
+          fi
+          printf '%s  %s\n' "$ARMV5_SHA256" "$archive" | sha256sum -c -
+          tar -xJf "$archive" -C .toolchains
+          sdk="$GITHUB_WORKSPACE/.toolchains/$ARMV5_SDK"
+          "$sdk/relocate-sdk.sh"
+          echo "CIPHERDNS_TOOLCHAIN_ROOT=$sdk" >> "$GITHUB_ENV"
+      - name: ARMv5 soft-float static build and inspection
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="0.2.0-dev+${GITHUB_SHA:0:12}"
+          case "$GITHUB_REF" in refs/tags/v*) version=${GITHUB_REF_NAME#v};; esac
+          ./build-local.sh --target linux-armv5 --link static --no-package --no-tests --version "$version" 2>&1 | tee build.log
+          VERSION="$version" TARGET=linux-armv5-musl-static BINARY=build/linux-armv5-BOTH-static/cipherdns scripts/package.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-linux-armv5-musl-static
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: logs-linux-armv5
+          path: |
+            *.log
+            build/linux-armv5-BOTH-static/CMakeFiles/CMakeConfigureLog.yaml
+            build/linux-armv5-BOTH-static/*.link-report.txt
+
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build and test with native VS 2022 compiler
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+          if errorlevel 1 exit /b 1
+          powershell -NoProfile -Command "$ErrorActionPreference='Stop'; $version='0.2.0-dev+'+$env:GITHUB_SHA.Substring(0,12); if ($env:GITHUB_REF -like 'refs/tags/v*') {$version=$env:GITHUB_REF_NAME.Substring(1)}; foreach ($mode in @('BOTH','SERVER','CLIENT')) { cmake -S . -B build-$mode -G Ninja -DCMAKE_BUILD_TYPE=MinSizeRel -DCIPHERDNS_MODE=$mode -DCIPHERDNS_VERSION=$version -DCIPHERDNS_LINK=static 2>&1 | Tee-Object configure-$mode.log; if ($LASTEXITCODE) {exit $LASTEXITCODE}; cmake --build build-$mode --parallel 2>&1 | Tee-Object build-$mode.log; if ($LASTEXITCODE) {exit $LASTEXITCODE}; ctest --test-dir build-$mode --output-on-failure 2>&1 | Tee-Object test-$mode.log; if ($LASTEXITCODE) {exit $LASTEXITCODE} }"
+      - name: Package default and Client mode
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="0.2.0-dev+${GITHUB_SHA:0:12}"
+          case "$GITHUB_REF" in refs/tags/v*) version=${GITHUB_REF_NAME#v};; esac
+          VERSION="$version" TARGET=windows-x86_64 BINARY=build-BOTH/cipherdns.exe scripts/package.sh
+          VERSION="$version" TARGET=windows-x86_64-CLIENT BINARY=build-CLIENT/cipherdns.exe scripts/package.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-windows-x86_64
+          path: dist/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: logs-windows-x86_64
+          path: |
+            *.log
+            build-*/CMakeFiles/CMakeConfigureLog.yaml
+            build-*/*.link-report.txt
+            build-*/Testing/Temporary/LastTest.log
