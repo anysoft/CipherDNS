@@ -118,10 +118,37 @@ ctest --test-dir build-ci-gcc13 -LE integration --output-on-failure
 
 配置日志中 `CIPHERDNS_MSVC_C11_ATOMICS_NATIVE - Failed` 可以是正常的能力探测结果：当前 MSVC 随后应通过 FLAG/WITH_FLAG 检查。缓存中的 `CIPHERDNS_MSVC_C11_ATOMICS_SUPPORTED=TRUE` 和 `CIPHERDNS_MSVC_C11_ATOMICS_OPTION` 记录最终结果。Windows 脚本核对缓存及 `platform.c` 的实际编译命令，同时继续检查项目/测试的 C11、`/W4 /WX` 和所有目标的 `/MT`，再执行三个模式的完整构建/CTest。
 
-本轮使用远程 Compiler Explorer 的实际 MSVC **19.44.35219.0**（通过 `_MSC_FULL_VER=194435219` 核对）：精确 CMake 原子探针无开关重现 C1189，加开关后编译/链接通过；保留 `/std:c11 /MT /W4 /WX` 的项目和测试逐文件编译 **52/52 PASS**（BOTH 22、SERVER 17、CLIENT 13），使用 MinSizeRel 的 `/O1 /Ob1 /DNDEBUG` 再验证同样 **52/52 PASS**。普通单元测试继续按 CMake 配置使用 `/UNDEBUG`；既有 D9025 参数覆盖提示不代表新增源码诊断，编译退出码为 0，未关闭 `/WX`。使用实际公开依赖头文件并复现现有 SYSTEM 头文件处理；未编译整个第三方库，也未进行完整应用链接或运行。实际验证版本与用户 Runner 的 **19.44.35229** 有补丁差异，不能混记。
+本轮使用远程 Compiler Explorer 的实际 MSVC **19.44.35219.0**（通过 `_MSC_FULL_VER=194435219` 核对）：精确 CMake 原子探针无开关重现 C1189，加开关后编译/链接通过；保留 `/std:c11 /MT /W4 /WX` 的项目和测试逐文件编译 **52/52 PASS**（BOTH 22、SERVER 17、CLIENT 13），使用 MinSizeRel 的 `/O1 /Ob1 /DNDEBUG` 再验证同样 **52/52 PASS**。当时普通单元测试还使用 `/UNDEBUG`，会产生 D9025 参数覆盖提示；后续 Reliability 修复已改为强制包含测试断言头文件，见下节。使用实际公开依赖头文件并复现现有 SYSTEM 头文件处理；未编译整个第三方库，也未进行完整应用链接或运行。实际验证版本与用户 Runner 的 **19.44.35229** 有补丁差异，不能混记。
 
 macOS ARM64、Ubuntu 24.04 ARM64 / GCC 13.3 三模式离线 CTest 均为 8/8、5/5、4/4 PASS，GCC ASan/UBSan 8/8 PASS；六个 Linux musl 目标重配/构建及静态 ELF 检查 PASS，非 MSVC 编译命令均不含实验开关。PowerShell 语法、两种原子支持路径和 13 种错误检测模拟 PASS。原始记录位于忽略目录 `build/msvc-atomics-fix/`、`build/atomic-msvc-non-msvc-regression/`。
 
 本机没有 Windows/MSVC 执行环境，不能把远程逐文件编译、原子链接探针或 PowerShell 模拟检查当作 Windows Server 2022 的完整 CTest。修改后的精确 MSVC 19.44.35229、Windows 原生 BOTH/SERVER/CLIENT 完整链接和 CTest 仍为 PENDING，且本次不自动 Push、创建 Tag 或发布 Release。
+
+### Windows Reliability Handle 检查与测试断言
+
+后续 Windows CI 已完成编译和链接，但 `test_reliability` 在首次执行 Hook 前建立 Handle 基线，循环结束后要求完全相等。资源所有权审查没有发现未配对的 Handle：`process_run` 的进程、主线程、Job、NUL 和可选输出管道均进入统一清理路径；Hook 不捕获输出，因此不创建管道。token、ACL、私有文件、原子写入、缓存 FILE、DNS Event 和 Socket 也各有释放路径。该循环直接传入 TXT，并且未开启连接探测，不运行 DNS 或 Socket 查询。
+
+远程原生执行探针复用了未修改的 `src/platform.c`，在 Windows Server 2022 **10.0.20348.5386**、MSVC **19.44.35219** 上观察到：
+
+| 阶段 | 当前 Handle 数 | 与前一阶段比较 |
+|---|---:|---:|
+| 初始 | 63 | — |
+| `cdns_platform_init` 后 | 69 | +6 |
+| 第一次实际 Hook 后 | 71 | +2 |
+| 连续 20 对成功/失败 Hook 后 | 71 | 每对均为 71，无增长 |
+| 第一次捕获输出后 | 72 | +1 |
+| 再执行 20 次捕获输出后 | 72 | 每次均为 72，无增长 |
+| 3 次超时 Hook 后 | 72 | 每次均为 72，无增长 |
+| `cdns_platform_cleanup` 后 | 68 | -4 |
+
+这些数据证明该环境的首次进程/捕获路径会增加稳定的进程级 Handle，后续调用没有持续增长；没有把具体内部 Handle 归因于尚未验证的 CRT 或 Windows API。探针使用自身 EXE 作为 Hook，未执行 PowerShell、受保护缓存文件或完整 Client 流程，不能代替原 Reliability 测试验收。
+
+Windows Reliability 测试现在额外执行一次真实的加密、Hook、日志、缓存写入/加载和重复抑制流程，然后建立稳定基线；原有 12 轮测试全部保留，每轮结束及缓存损坏/恢复后仍要求与基线**严格相等**，没有增加容差。压力模式保留 32 轮 Windows 地址变化。分阶段计数覆盖初始化、Hook 前后、缓存读写和每轮结束，输出基线、当前值、差值和相邻轮次趋势；采样先保存在内存，最后或断言失败时打印，避免诊断自己的首次 I/O 初始化影响测量。POSIX 不执行新增预热，原有精确 FD、超时解析子进程回收和成功 Hook 后代清理检查保留。
+
+所有测试目标强制包含 `tests/test_assertions.h`，在任何 `assert.h` 使用前取消 `NDEBUG`。生产目标保留 MinSizeRel 的 `/DNDEBUG`；测试不再传 `/UNDEBUG`，因此消除 D9025，同时保持 `/std:c11 /MT /W4 /WX`。最终 Reliability 翻译单元在 BOTH、SERVER、CLIENT 三种模式宏配置下用实际 MSVC MinSizeRel 参数编译，均无编译诊断；这项逐文件检查不等于三模式完整构建。独立断言副作用探针输出 `ASSERTIONS_ENABLED=1`。
+
+Windows 构建脚本在三模式完整 CTest 后，对 BOTH 和 CLIENT 各执行 `ctest -R '^reliability$' --repeat until-fail:20 --verbose` 和 `test_reliability.exe --resource-workload`，日志分别保留为 `reliability-repeat-<MODE>.log`、`reliability-resource-<MODE>.log`。SERVER 没有 Client/Hook 目标，运行其完整 CTest。独立的受保护文件原子写入探针受到远程执行环境 AppContainer 限制，无法完成 `MoveFileExA`，因此没有在该环境执行完整 Reliability EXE。完整 Windows Reliability 连续 20 次、压力模式及完整三模式原生 CTest 仍为 **PENDING**，须由下一次 GitHub CI 执行；本次不自动推送。
+
+本次 macOS ARM64、Ubuntu 24.04.5 ARM64 / GCC 13.3 三模式完整 CTest 均通过：BOTH 8 项、SERVER 5 项、CLIENT 4 项离线测试，三家真实云集成测试按配置缺失 SKIP。Linux 保留 `-Werror` 和 `_FORTIFY_SOURCE=2`。两个平台的 BOTH、CLIENT POSIX `--resource-workload` 各通过 256 次地址变化，FD 精确相等，子进程回收检查通过。macOS ASan/UBSan 和 Linux ASan/UBSan 均为 8 项离线测试 PASS、3 项云集成 SKIP；Linux 额外开启 LeakSanitizer，macOS 未声称其不支持的 LeakSanitizer 验证。六个 musl 目标的最终 Reliability 翻译单元编译/链接及静态 ELF 检查通过，未在外架构运行测试。原始日志与汇总位于 Git 忽略的 `build/windows-reliability-fix/`；Windows 原生探针、MSVC 编译、macOS Sanitizer 等记录位于 `build/windows-reliability-evidence/`。
 
 参考：[CMake Toolchains](https://cmake.org/cmake/help/latest/manual/cmake-toolchains.7.html)、[Zig 固定版本下载索引](https://ziglang.org/download/index.json)、[Bootlin ARMv5 SDK 校验](https://toolchains.bootlin.com/downloads/releases/toolchains/armv5-eabi/tarballs/armv5-eabi--musl--stable-2025.08-1.sha256)、[GitHub runner-images](https://github.com/actions/runner-images)。

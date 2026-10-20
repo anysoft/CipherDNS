@@ -116,6 +116,7 @@ foreach ($mode in @('BOTH', 'SERVER', 'CLIENT')) {
         throw "CMake did not export compile commands for $mode."
     }
     $platformCommands = 0
+    $testCommands = 0
     foreach ($entry in $commands) {
         if ($entry.command -notmatch '(?:^|\s)[/-]MT(?:\s|$)' -or
             $entry.command -match '(?:^|\s)[/-]MDd?(?:\s|$)') {
@@ -126,6 +127,13 @@ foreach ($mode in @('BOTH', 'SERVER', 'CLIENT')) {
                 if ($entry.command -notmatch ('(?:^|\s)[/-]' + [regex]::Escape($requiredOption) + '(?:\s|$)')) {
                     throw "Expected MSVC /$requiredOption for $($entry.file)."
                 }
+            }
+        }
+        if ($entry.file -match '(?:^|[\\/])tests[\\/]') {
+            ++$testCommands
+            if ($entry.command -match '(?:^|\s)[/-]UNDEBUG(?:\s|$)' -or
+                $entry.command -notmatch 'test_assertions\.h(?:"|\s|$)') {
+                throw "Expected the forced assertion header without /UNDEBUG for $($entry.file)."
             }
         }
         if ($entry.file -match '(?:^|[\\/])src[\\/]platform\.c$') {
@@ -139,7 +147,22 @@ foreach ($mode in @('BOTH', 'SERVER', 'CLIENT')) {
     if ($platformCommands -eq 0) {
         throw "CMake did not export the src/platform.c compilation command for $mode."
     }
+    if ($testCommands -eq 0) {
+        throw "CMake did not export test compilation commands for $mode."
+    }
     Invoke-LoggedNative cmake @('--build', $buildDir, '--parallel') "build-$mode.log"
+    if (Select-String -LiteralPath "build-$mode.log" -Pattern '\bD9025\b' -Quiet) {
+        throw "MSVC reported an option override (D9025) for $mode; see build-$mode.log."
+    }
     Invoke-LoggedNative ctest @('--test-dir', $buildDir, '--output-on-failure') "test-$mode.log"
+    if ($mode -ne 'SERVER') {
+        # Verbose output retains per-stage handle counts for all 20 processes.
+        # SERVER has no client/Hook reliability target; its full CTest ran above.
+        Invoke-LoggedNative ctest @(
+            '--test-dir', $buildDir, '--no-tests=error',
+            '-R', '^reliability$', '--repeat', 'until-fail:20', '--verbose'
+        ) "reliability-repeat-$mode.log"
+        Invoke-LoggedNative "./$buildDir/test_reliability.exe" @('--resource-workload') "reliability-resource-$mode.log"
+    }
     Invoke-LoggedNative "./$buildDir/cipherdns.exe" @('--version') "version-$mode.log"
 }

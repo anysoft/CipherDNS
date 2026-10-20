@@ -21,10 +21,12 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
+static void dump_resource_trace(void);
 #define CHECK(x)                                                                                   \
     do {                                                                                           \
         if (!(x)) {                                                                                \
-            fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x);                                \
+            dump_resource_trace();                                                                 \
+            fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x);                                 \
             return 1;                                                                              \
         }                                                                                          \
     } while (0)
@@ -84,6 +86,53 @@ static long resource_count(void) {
         if (fcntl((int)i, F_GETFD) >= 0 || errno != EBADF)
             ++count;
     return count;
+#endif
+}
+#ifdef _WIN32
+typedef struct {
+    const char *stage;
+    unsigned iteration;
+    long handles;
+} resource_sample;
+static resource_sample resource_samples[1024];
+static size_t resource_sample_count;
+static long resource_baseline = -1;
+#endif
+/* Buffer diagnostics until measurement is over: the first fprintf itself can
+ * initialize CRT resources and must not change the measured baseline. */
+static int trace_resources(const char *stage, unsigned iteration) {
+#ifdef _WIN32
+    resource_sample *sample;
+    if (resource_sample_count == sizeof resource_samples / sizeof resource_samples[0])
+        return -1;
+    sample = &resource_samples[resource_sample_count++];
+    sample->stage = stage;
+    sample->iteration = iteration;
+    sample->handles = resource_count();
+    return sample->handles < 0 ? -1 : 0;
+#else
+    (void)stage;
+    (void)iteration;
+    return 0;
+#endif
+}
+static void dump_resource_trace(void) {
+#ifdef _WIN32
+    long previous = resource_baseline, previous_round = resource_baseline;
+    for (size_t i = 0; i < resource_sample_count; ++i) {
+        const resource_sample *sample = &resource_samples[i];
+        fprintf(stderr,
+                "RESOURCE stage=%s iteration=%u baseline=%ld current=%ld delta=%+ld "
+                "previous_delta=%+ld\n",
+                sample->stage, sample->iteration, resource_baseline, sample->handles,
+                sample->handles - resource_baseline, sample->handles - previous);
+        if (!strcmp(sample->stage, "round-end")) {
+            fprintf(stderr, "RESOURCE_TREND iteration=%u current=%ld round_delta=%+ld\n",
+                    sample->iteration, sample->handles, sample->handles - previous_round);
+            previous_round = sample->handles;
+        }
+        previous = sample->handles;
+    }
 #endif
 }
 static long file_size(const char *path) {
@@ -173,6 +222,7 @@ int main(int argc, char **argv) {
     loops = resource_workload ? 256 : 64;
 #endif
     CHECK(!cdns_platform_init());
+    CHECK(!trace_resources("platform-init", 0));
     snprintf(c.domain, sizeof c.domain, "example.com");
     CHECK(!cdns_test_path_join(c.state_file, sizeof c.state_file, directory, "/state"));
     CHECK(!cdns_test_path_join(c.current_file, sizeof c.current_file, directory,
@@ -185,6 +235,7 @@ int main(int argc, char **argv) {
 #endif
     c.hook_timeout = 3;
     CHECK(!write_hook(c.hook, 0));
+    CHECK(!trace_resources("hook-file-written", 0));
     if (resource_workload) {
         puts("resource phase: startup complete; idle for 3 seconds");
         fflush(stdout);
@@ -193,12 +244,38 @@ int main(int argc, char **argv) {
         fflush(stdout);
     } else
         CHECK(!resolver_tests());
+#ifdef _WIN32
+    /* The first CreateProcess/CRT use can retain process-wide runtime handles.
+     * Exercise the real Hook, logging and cache paths before taking a baseline.
+     * Every subsequent round must equal it exactly, so repeated leaks still fail.
+     * Keep this extra address change separate from all original measured rounds. */
+    CHECK(!trace_resources("warmup-before", 0));
+    CHECK(!cdns_encrypt(key, &address, txt));
+    CHECK(!trace_resources("warmup-encrypted", 0));
+    CHECK(!trace_resources("warmup-hook-and-cache-before", 0));
+    CHECK(!cdns_client_step(&c, key, &state, txt, err, sizeof err));
+    CHECK(!trace_resources("warmup-hook-and-cache-after", 0));
+    ++expected_calls;
+    CHECK(file_size(calls) == expected_calls);
+    CHECK(!cdns_client_load(&c, key, &restored));
+    CHECK(!trace_resources("warmup-cache-loaded", 0));
+    CHECK(!cdns_client_step(&c, key, &restored, txt, err, sizeof err));
+    CHECK(file_size(calls) == expected_calls);
+    state = restored;
+    CHECK(!trace_resources("warmup-complete", 0));
+#endif
     handles = resource_count();
     CHECK(handles > 0);
+#ifdef _WIN32
+    resource_baseline = handles;
+#endif
+    CHECK(!trace_resources("baseline", 0));
     for (i = 0; i < loops; ++i) {
+        CHECK(!trace_resources("round-begin", i + 1));
         snprintf(address.ipv4, sizeof address.ipv4, "203.0.113.%u", 1 + i % 200);
         snprintf(address.ipv6, sizeof address.ipv6, "2001:db8::%x", 1 + i);
         CHECK(!cdns_encrypt(key, &address, txt));
+        CHECK(!trace_resources("encrypted", i + 1));
         previous = state;
         CHECK(cdns_client_step(&c, key, &state, NULL, err, sizeof err));
         CHECK(!memcmp(&state, &previous, sizeof state));
@@ -206,20 +283,30 @@ int main(int argc, char **argv) {
         CHECK(!memcmp(&state, &previous, sizeof state));
         if (i % 8 == 0) {
             CHECK(!write_hook(c.hook, 1));
+            CHECK(!trace_resources("failed-hook-before", i + 1));
             CHECK(cdns_client_step(&c, key, &state, txt, err, sizeof err));
+            CHECK(!trace_resources("failed-hook-after", i + 1));
             CHECK(!memcmp(&state.applied, &previous.applied, sizeof state.applied));
             CHECK(state.has_applied == previous.has_applied && state.retry_hook);
             CHECK(!write_hook(c.hook, 0));
         }
+        CHECK(!trace_resources("hook-and-cache-before", i + 1));
         CHECK(!cdns_client_step(&c, key, &state, txt, err, sizeof err));
+        CHECK(!trace_resources("hook-and-cache-after", i + 1));
         CHECK(cdns_address_equal(&state.applied, &address));
         ++expected_calls;
         CHECK(file_size(calls) == expected_calls);
         CHECK(!cdns_client_step(&c, key, &state, txt, err, sizeof err));
+        CHECK(!trace_resources("duplicate-suppressed", i + 1));
         CHECK(!cdns_client_load(&c, key, &restored));
+        CHECK(!trace_resources("cache-loaded", i + 1));
         CHECK(!cdns_client_step(&c, key, &restored, txt, err, sizeof err));
         CHECK(file_size(calls) == expected_calls);
         state = restored; /* Repeat startup restoration on every address change. */
+        CHECK(!trace_resources("round-end", i + 1));
+#ifdef _WIN32
+        CHECK(resource_count() == handles);
+#endif
     }
     CHECK(resource_count() == handles);
     file = fopen(c.state_file, "rb");
@@ -227,15 +314,22 @@ int main(int argc, char **argv) {
     n = fread(cache, 1, sizeof cache - 16, file);
     CHECK(n && feof(file) && !ferror(file));
     CHECK(!fclose(file));
+    CHECK(!trace_resources("cache-read-closed", loops));
     memcpy(cache + n, "\0hidden-corrupt", 15);
     CHECK(!cdns_atomic_write(c.state_file, cache, n + 15));
+    CHECK(!trace_resources("cache-corrupt-written", loops));
     CHECK(cdns_client_load(&c, key, &restored));
     CHECK(!restored.has_applied);
+    CHECK(!trace_resources("cache-corrupt-loaded", loops));
     CHECK(!cdns_atomic_write(c.state_file, "broken cache", 12));
+    CHECK(!trace_resources("cache-broken-written", loops));
     CHECK(cdns_client_load(&c, key, &restored));
     CHECK(!restored.has_applied);
+    CHECK(!trace_resources("cache-broken-loaded", loops));
     CHECK(!cdns_atomic_write(c.state_file, cache, n));
+    CHECK(!trace_resources("cache-restored-written", loops));
     CHECK(!cdns_client_load(&c, key, &restored));
+    CHECK(!trace_resources("cache-restored", loops));
     CHECK(!cdns_client_step(&c, key, &restored, txt, err, sizeof err));
     CHECK(file_size(calls) == expected_calls);
 #ifndef _WIN32
@@ -266,6 +360,7 @@ int main(int argc, char **argv) {
     }
 #endif
     CHECK(resource_count() == handles);
+    CHECK(!trace_resources("final-measured", loops));
     CHECK(!remove(c.hook));
     CHECK(!remove(c.current_file));
     CHECK(!remove(c.state_file));
@@ -276,6 +371,8 @@ int main(int argc, char **argv) {
     CHECK(!rmdir(directory));
 #endif
     cdns_platform_cleanup();
+    CHECK(!trace_resources("platform-cleanup", loops));
+    dump_resource_trace();
     printf("PASS: %u address changes/restarts, duplicate suppression, failures/recovery, cache "
            "corruption; no descriptor/handle growth\n",
            loops);
