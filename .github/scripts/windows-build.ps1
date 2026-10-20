@@ -82,6 +82,20 @@ foreach ($mode in @('BOTH', 'SERVER', 'CLIENT')) {
     Assert-CacheValue $cache 'CIPHERDNS_VERSION' $Version
     Assert-CacheValue $cache 'CMAKE_BUILD_TYPE' 'MinSizeRel'
     Assert-CacheValue $cache 'CMAKE_GENERATOR' 'Ninja'
+    Assert-CacheValue $cache 'CIPHERDNS_MSVC_C11_ATOMICS_SUPPORTED' 'TRUE'
+    if (-not $cache.ContainsKey('CIPHERDNS_MSVC_C11_ATOMICS_OPTION')) {
+        throw "CMake did not report its selected C11 atomics option for $mode."
+    }
+    $atomicOption = $cache['CIPHERDNS_MSVC_C11_ATOMICS_OPTION']
+    if ($atomicOption -ceq '/experimental:c11atomics') {
+        Assert-CacheValue $cache 'CIPHERDNS_MSVC_C11_ATOMICS_WITH_FLAG' '1'
+        Write-Host "C11 atomics for ${mode}: checked /experimental:c11atomics"
+    } elseif ($atomicOption -ceq '') {
+        Assert-CacheValue $cache 'CIPHERDNS_MSVC_C11_ATOMICS_NATIVE' '1'
+        Write-Host "C11 atomics for ${mode}: compiler supports atomics without an extra option"
+    } else {
+        throw "Unexpected CMake C11 atomics option for ${mode}: '$atomicOption'."
+    }
     if (-not $cache.ContainsKey('CMAKE_C_COMPILER') -or
         [IO.Path]::GetFullPath($cache['CMAKE_C_COMPILER']) -ine [IO.Path]::GetFullPath($compiler)) {
         throw "CMake did not select the initialized MSVC compiler for $mode."
@@ -101,11 +115,29 @@ foreach ($mode in @('BOTH', 'SERVER', 'CLIENT')) {
     if ($commands.Count -eq 0) {
         throw "CMake did not export compile commands for $mode."
     }
+    $platformCommands = 0
     foreach ($entry in $commands) {
         if ($entry.command -notmatch '(?:^|\s)[/-]MT(?:\s|$)' -or
             $entry.command -match '(?:^|\s)[/-]MDd?(?:\s|$)') {
             throw "Expected the static MSVC /MT runtime for $($entry.file)."
         }
+        if ($entry.file -match '(?:^|[\\/])(?:src|tests)[\\/]') {
+            foreach ($requiredOption in @('std:c11', 'W4', 'WX')) {
+                if ($entry.command -notmatch ('(?:^|\s)[/-]' + [regex]::Escape($requiredOption) + '(?:\s|$)')) {
+                    throw "Expected MSVC /$requiredOption for $($entry.file)."
+                }
+            }
+        }
+        if ($entry.file -match '(?:^|[\\/])src[\\/]platform\.c$') {
+            ++$platformCommands
+            if ($atomicOption -ne '' -and
+                $entry.command -notmatch '(?:^|\s)/experimental:c11atomics(?:\s|$)') {
+                throw "Expected the checked MSVC C11 atomics option for $($entry.file)."
+            }
+        }
+    }
+    if ($platformCommands -eq 0) {
+        throw "CMake did not export the src/platform.c compilation command for $mode."
     }
     Invoke-LoggedNative cmake @('--build', $buildDir, '--parallel') "build-$mode.log"
     Invoke-LoggedNative ctest @('--test-dir', $buildDir, '--output-on-failure') "test-$mode.log"

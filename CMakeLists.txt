@@ -61,6 +61,9 @@ else()
   endif()
 endif()
 
+include(cmake/MSVCAtomics.cmake)
+cdns_enable_msvc_atomics(cdns_options)
+
 # Sources are checked into the repository. Configuration never downloads dependencies.
 file(GLOB mbed_sources CONFIGURE_DEPENDS "third_party/mbedtls/library/*.c")
 if(NOT mbed_sources OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/inih/ini.c")

@@ -108,4 +108,20 @@ ctest --test-dir build-ci-gcc13 -LE integration --output-on-failure
 
 兼容参考：[checkout README](https://github.com/actions/checkout/tree/3d3c42e5aac5ba805825da76410c181273ba90b1)、[upload v7](https://github.com/actions/upload-artifact/releases/tag/v7.0.0)、[download v8](https://github.com/actions/download-artifact/releases/tag/v8.0.0)、[Visual Studio Developer PowerShell](https://learn.microsoft.com/en-us/visualstudio/ide/reference/command-prompt-powershell?view=vs-2022)、[MSVC /MT](https://learn.microsoft.com/en-us/cpp/build/reference/md-mt-ld-use-run-time-library?view=msvc-170)。
 
+### MSVC C11 原子操作
+
+后续 [CI 运行 39399888828](https://github.com/anysoft/CipherDNS/actions/runs/39399888828) 的 Windows 编译在 `vcruntime_c11_stdatomic.h` 报 `C atomic support is not enabled`。`/std:c11` 并不自动启用当前 MSVC 的可选原子实现；微软从 VS 2022 17.5 起提供 `/experimental:c11atomics`，MSVC 19.44 属于支持的工具链系列。见 [微软 C11 atomics 说明](https://devblogs.microsoft.com/cppblog/c11-atomics-in-visual-studio-2022-version-17-5-preview-2/)。
+
+项目唯一的 C11 原子对象是 `src/platform.c` 的 `atomic_flag hook_busy`，用于 Hook 的进程内互斥，test-and-set/clear 默认都是顺序一致。Windows 退出标志已使用 Interlocked。本次保持这些源码和内存序不变，不替换平台原子实现。
+
+`cmake/MSVCAtomics.cmake` 仅对原生 MSVC 生效：先实际编译/链接 `<stdatomic.h>`、`ATOMIC_FLAG_INIT`、test-and-set 和 clear；若原生支持不足，再检查编译器是否接受实验开关，并用开关重新编译/链接同一段程序。能力检查不执行程序，不依赖可能仍被定义的 `__STDC_NO_ATOMICS__`。支持时将选项通过共享 `cdns_options` 的 C 语言 INTERFACE 传播到 core 及相关目标；旧工具链不支持时在配置阶段给出升级提示，不强行加入未知参数。未来可直接支持原子的 MSVC 不需要实验开关。
+
+配置日志中 `CIPHERDNS_MSVC_C11_ATOMICS_NATIVE - Failed` 可以是正常的能力探测结果：当前 MSVC 随后应通过 FLAG/WITH_FLAG 检查。缓存中的 `CIPHERDNS_MSVC_C11_ATOMICS_SUPPORTED=TRUE` 和 `CIPHERDNS_MSVC_C11_ATOMICS_OPTION` 记录最终结果。Windows 脚本核对缓存及 `platform.c` 的实际编译命令，同时继续检查项目/测试的 C11、`/W4 /WX` 和所有目标的 `/MT`，再执行三个模式的完整构建/CTest。
+
+本轮使用远程 Compiler Explorer 的实际 MSVC **19.44.35219.0**（通过 `_MSC_FULL_VER=194435219` 核对）：精确 CMake 原子探针无开关重现 C1189，加开关后编译/链接通过；保留 `/std:c11 /MT /W4 /WX` 的项目和测试逐文件编译 **52/52 PASS**（BOTH 22、SERVER 17、CLIENT 13），使用 MinSizeRel 的 `/O1 /Ob1 /DNDEBUG` 再验证同样 **52/52 PASS**。普通单元测试继续按 CMake 配置使用 `/UNDEBUG`；既有 D9025 参数覆盖提示不代表新增源码诊断，编译退出码为 0，未关闭 `/WX`。使用实际公开依赖头文件并复现现有 SYSTEM 头文件处理；未编译整个第三方库，也未进行完整应用链接或运行。实际验证版本与用户 Runner 的 **19.44.35229** 有补丁差异，不能混记。
+
+macOS ARM64、Ubuntu 24.04 ARM64 / GCC 13.3 三模式离线 CTest 均为 8/8、5/5、4/4 PASS，GCC ASan/UBSan 8/8 PASS；六个 Linux musl 目标重配/构建及静态 ELF 检查 PASS，非 MSVC 编译命令均不含实验开关。PowerShell 语法、两种原子支持路径和 13 种错误检测模拟 PASS。原始记录位于忽略目录 `build/msvc-atomics-fix/`、`build/atomic-msvc-non-msvc-regression/`。
+
+本机没有 Windows/MSVC 执行环境，不能把远程逐文件编译、原子链接探针或 PowerShell 模拟检查当作 Windows Server 2022 的完整 CTest。修改后的精确 MSVC 19.44.35229、Windows 原生 BOTH/SERVER/CLIENT 完整链接和 CTest 仍为 PENDING，且本次不自动 Push、创建 Tag 或发布 Release。
+
 参考：[CMake Toolchains](https://cmake.org/cmake/help/latest/manual/cmake-toolchains.7.html)、[Zig 固定版本下载索引](https://ziglang.org/download/index.json)、[Bootlin ARMv5 SDK 校验](https://toolchains.bootlin.com/downloads/releases/toolchains/armv5-eabi/tarballs/armv5-eabi--musl--stable-2025.08-1.sha256)、[GitHub runner-images](https://github.com/actions/runner-images)。
